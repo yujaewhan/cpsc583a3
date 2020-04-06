@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+    body {
+        width: 940px;
+        margin: 0 auto;
+        margin-top: 2em;
+    }
+
+    svg {
+        font: 10px sans-serif;
+    }
+
+    .axis path,
+    .axis line {
+        fill: none;
+        stroke: black;
+        shape-rendering: crispEdges;
+    }
+</style>
+<body>
+<script src="d3.js"></script>
+<script src="topojson.v1.min.js"></script>
+<script>
+    // let d3 = import(d3.js);
+    /**
+     * copied from the following resources:
+     * http://bl.ocks.org/micahstubbs/281d7b7a7e39a9b59cf80f1b8bd41a72
+     * http://bl.ocks.org/msbarry/9911363
+     * http://bl.ocks.org/weiglemc/6185069
+     *
+    **/
+
+	const margin = {top: 0, right: 0, bottom: 0, left: 0};
+	const width = 960 - margin.left - margin.right;
+	const height = 1000 - margin.top - margin.bottom;
+
+    const color = d3.scaleThreshold()
+        .domain([2, 3, 4, 5, 6, 7, 8])
+        .range( d3.schemeBlues[7] )
+        .unknown(d3.rgb(255,200,200));
+
+	const svg = d3.select('body')
+			.append('svg')
+			.attr('width', width)
+			.attr('height', height);
+
+    const map = svg
+        .append('g')
+        .attr('class', 'map');
+
+    const scatterplot = svg
+        .append('g')
+        .attr('class', 'scatterplot')
+        .attr("transform", "translate(100,550)");
+
+    const projection = d3.geoMercator()
+			.scale(130)
+			.translate( [width / 2, height / 1.5/2]);
+
+	const path = d3.geoPath().projection(projection);
+
+    const radius = 3.5;
+    Promise.all([
+        d3.csv('who.csv'),
+        d3.json('world_countries.json'),
+        d3.tsv('world_population.tsv')
+    ]).then(function(data) {
+		const fertilityById = {};
+
+        let who = data[0];
+        let countries = data[1];
+        let population = data[2];
+
+        let fieldColor = 'Total fertility rate (per woman)';
+        let fieldXAxis = "Urban_population_growth";
+        let fieldYAxis = "Urban_population_pct_of_total";
+
+        who.forEach(d => {
+            if(d[fieldColor] == '') {
+                d[fieldColor] = undefined;
+            };
+        });
+
+        population.forEach(d =>
+        {
+            var res = who.find(e =>
+            {
+                return e.Country == d.name;
+            });
+            if(typeof res !== 'undefined') {
+                res.id = d.id;
+            }
+        });
+
+        who.forEach(d => { fertilityById[d.id] = +d[fieldColor]; });
+        countries.features.forEach(d => { d.population = fertilityById[d.id] });
+
+        svg.append('g')
+				.attr('class', 'countries')
+				.selectAll('path')
+				.data(countries.features)
+				.enter().append('path')
+                .attr("class", d => { return "COUNTRY-CODE-"+d.properties.name;} )
+				.attr('d', path)
+				.style('fill', d => color(fertilityById[d.id]))
+				.style('stroke', 'white')
+				.style('opacity', 0.8)
+				.style('stroke-width', 0.3)
+				.on('mouseover',function(d){
+                    d3.select(this)
+                        .style('fill', 'green');
+                    svg.append("text")
+                        .attr("id", d.properties.name)
+                        .attr("x", 50)
+                        .attr("y", 50)
+                        .text(d.properties.name);
+                    scatterplot.select('circle.dot.COUNTRY-' + d.properties.name)
+                        .style('fill', 'green')
+                })
+				.on('mouseout', function(d){
+                    d3.select(this)
+                        .style('fill', d => color(fertilityById[d.id]));
+                    d3.select("#"+d.properties.name).remove();
+                    scatterplot.select('circle.dot.COUNTRY-' + d.properties.name)
+                        .style('fill', d => color(fertilityById[d.id]));
+                });
+
+		svg.append('path')
+				.datum(topojson.mesh(countries.features, (a, b) => a.id !== b.id))
+				.attr('class', 'names')
+				.attr('d', path);
+
+        // setup x
+        var xValue = function(d) { return d[fieldXAxis];}, // data -> value
+            xScale = d3.scaleLinear().range([0, height/2-100]), // value -> display
+            xMap = function(d) { return xScale(xValue(d));}, // data -> display
+            xAxis = d3.axisBottom().scale(xScale);
+
+        // setup y
+        var yValue = function(d) { return d[fieldYAxis];}, // data -> value
+            yScale = d3.scaleLinear().range([height/2-100, 0]), // value -> display
+            yMap = function(d) { return yScale(yValue(d));}, // data -> display
+            yAxis = d3.axisLeft().scale(yScale);
+
+        // don't want dots overlapping axis, so add in buffer to data domain
+        xScale.domain([-2, 8]);
+        yScale.domain([0, 100]);
+
+        // x-axis
+        scatterplot.append("g")
+            .attr("class", "x axis")
+            .attr("transform", "translate(0," + (height/2-100) + ")")
+            .call(xAxis)
+            .append("text")
+            .attr("class", "label")
+            .attr("x", xScale(8))
+            .attr("y", -6)
+            .style("text-anchor", "end")
+            .text(fieldXAxis.replace(/_/g, " "));
+
+        // y-axis
+        scatterplot.append("g")
+            .attr("class", "y axis")
+            .call(yAxis)
+            .append("text")
+            .attr("class", "label")
+            .attr("transform", "rotate(-90)")
+            .attr("x", 0)
+            .attr("y", yScale(100))
+            .attr("dy", "1.5em")
+            .style("text-anchor", "end")
+            .text(fieldYAxis.replace(/_/g, " "));
+
+        // draw dots
+        scatterplot.selectAll(".dot")
+            .data(who)
+            .enter().append("circle")
+            .attr("class", d => { return "dot COUNTRY-"+d.Country; } )
+            .attr("r", radius)
+            .attr("cx", xMap)
+            .attr("cy", yMap)
+            .style("fill", function(d) { return color(d[fieldColor]);})
+            .on('mouseover', function(d){
+                d3.select(this)
+                    .attr("r", radius * 2);
+                scatterplot.append("text")
+                    .attr("id", d.Country)
+                    .attr("x", xMap(d))
+                    .attr("y", yMap(d))
+                    .text(d.Country);
+                svg.select('path.COUNTRY-CODE-' + d.Country)
+                .style('fill','green')
+            })
+            .on("mouseout", function(d){
+                d3.select(this).attr("r", radius);
+                d3.select("#"+d.Country).remove();
+                svg.select('path.COUNTRY-CODE-' + d.Country)
+                    .style('fill', d => color(fertilityById[d.id]))
+            });
+
+        // draw legend
+        var legend = scatterplot.append("g").attr("class", "legend-group").selectAll(".legend")
+            .data(color.domain())
+            .enter().append("g")
+            .attr("class", "legend")
+            .attr("transform", function(d, i) { return "translate(-100," + (i+1) * 20 + ")"; });
+
+        // draw legend colored rectangles
+        legend.append("rect")
+            .attr("x", width/2 + 4)
+            .attr("width", 18)
+            .attr("height", 18)
+            .style("fill", (d,i)=> color(d-0.0001));
+
+        // draw legend text
+        legend.append("text")
+            .attr("x", width/2 - 3)
+            .attr("y", 9)
+            .attr("dy", ".35em")
+            .style("text-anchor", "end")
+            .text(function(d) { return "< "+d;});
+
+        scatterplot.select("g.legend-group")
+            .append("g")
+            .attr("class", "legend")
+            .attr("transform", "translate(-100,0)")
+            .append("text")
+            .attr("x", width/2+22)
+            .attr("y", 0)
+            .attr("dy", "1.5em")
+            .style("text-anchor", "end")
+            .text(fieldColor);
+    });
+
+</script>
+</body>
+</html>
